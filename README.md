@@ -31,3 +31,6 @@ Trata-se da primeira versão funcional do protótipo, destinada a testes iniciai
 
 ## Contato
 Para dúvidas ou contribuições relacionadas a este protótipo, utilize os canais de comunicação do repositório (issues, pull requests ou contato do responsável).
+
+## Para rodar:
+pip install -r requirements.txt
