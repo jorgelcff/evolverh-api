@@ -16,14 +16,79 @@ st.set_page_config(
 # Carregar variáveis de ambiente
 load_dotenv()
 
-# Verificar se a API key está configurada
-if not os.getenv("GEMINI_API_KEY"):
-    st.error("⚠️ API Key não configurada. Crie um arquivo .env com GEMINI_API_KEY")
-    st.info("Obtenha em: https://aistudio.google.com/app/apikey")
-    st.stop()
+# Credenciais fake para simulação
+CREDENCIAIS = {
+    "rh": {"senha": "rh123", "tipo": "rh", "nome": "Funcionário RH", "email": "rh@example.com"},
+    "funcionario": {"senha": "func123", "tipo": "empresa", "nome": "Funcionário Empresa", "email": "funcionario@example.com"}
+}
 
-# Configurar Gemini
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Função de login
+def login_page():
+    st.title("🔐 Login - Chatbot RH")
+    st.caption("Sistema de acesso para funcionários")
+    
+    with st.form("login_form"):
+        username = st.text_input("Usuário")
+        password = st.text_input("Senha", type="password")
+        submitted = st.form_submit_button("Entrar")
+        
+        if submitted:
+            if username in CREDENCIAIS and CREDENCIAIS[username]["senha"] == password:
+                st.session_state.logged_in = True
+                st.session_state.user_type = CREDENCIAIS[username]["tipo"]
+                st.session_state.user_name = CREDENCIAIS[username]["nome"]
+                st.success(f"Bem-vindo, {CREDENCIAIS[username]['nome']}!")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("Usuário ou senha incorretos")
+
+# Função principal
+def main():
+    # Verificar se está logado
+    if not st.session_state.get("logged_in", False):
+        login_page()
+        return
+
+    # Configurar API apenas após login
+    if not os.getenv("GEMINI_API_KEY"):
+        st.error("⚠️ API Key não configurada. Crie um arquivo .env com GEMINI_API_KEY")
+        st.info("Obtenha em: https://aistudio.google.com/app/apikey")
+        return
+
+    # Configurar Gemini
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+# Função para gerar PDF da conversa
+def gerar_pdf_conversa(historico):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    
+    pdf.cell(200, 10, txt="Historico da Conversa - Chatbot RH", ln=True, align='C')
+    pdf.ln(10)
+    
+    for msg in historico:
+        role = "Voce" if msg['role'] == 'user' else "Assistente"
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 10, txt=f"{role}:", ln=True)
+        pdf.set_font("Arial", size=12)
+        # Quebrar linhas longas
+        content = msg['content']
+        pdf.multi_cell(0, 10, txt=content)
+        pdf.ln(5)
+    
+    return pdf.output(dest='S').encode('latin-1')
+
+# Função para carregar políticas
+@st.cache_data
+def carregar_politicas():
+    try:
+        with open('politicas.txt', 'r', encoding='utf-8') as file:
+            return file.read()
+    except FileNotFoundError:
+        st.error("Arquivo politicas.txt não encontrado!")
+        return ""
 
 # Função para gerar PDF da conversa
 def gerar_pdf_conversa(historico):
@@ -265,6 +330,11 @@ Qual desses tópicos gostaria de saber mais?
 
 # Interface principal
 def main():
+    # Verificar se usuário está logado
+    if 'logged_in' not in st.session_state or not st.session_state.logged_in:
+        login_page()
+        return
+    
     # CSS customizado
     st.markdown("""
     <style>
@@ -276,12 +346,19 @@ def main():
     """, unsafe_allow_html=True)
     
     # Header
-    col1, col2 = st.columns([1, 4])
+    col1, col2, col3 = st.columns([1, 3, 1])
     with col1:
         st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=60)
     with col2:
         st.title("🤖 Chatbot de RH")
-        st.caption("MVP - Assistente Virtual para Dúvidas Corporativas")
+        st.caption(f"MVP - Assistente Virtual | Usuário: {st.session_state.user_name}")
+    with col3:
+        if st.button("🚪 Sair", key="logout"):
+            st.session_state.logged_in = False
+            st.session_state.user_type = None
+            st.session_state.user_name = None
+            st.session_state.historico = []
+            st.rerun()
     
     # Inicializar histórico na session state
     if 'historico' not in st.session_state:
@@ -311,7 +388,27 @@ def main():
         
         st.divider()
         
-        # Exemplo de perguntas
+        # Funcionalidades específicas por tipo de usuário
+        if st.session_state.user_type == "rh":
+            st.subheader("⚙️ Painel RH")
+            
+            # Upload de políticas
+            st.markdown("**Atualizar Políticas:**")
+            uploaded_file = st.file_uploader("Selecione o arquivo politicas.txt", type="txt")
+            if uploaded_file is not None:
+                if st.button("📤 Subir Arquivo", key="upload"):
+                    # Salvar o arquivo
+                    with open('politicas.txt', 'wb') as f:
+                        f.write(uploaded_file.getvalue())
+                    # Recarregar políticas
+                    st.session_state.politicas = carregar_politicas()
+                    st.success("Políticas atualizadas com sucesso!")
+                    time.sleep(1)
+                    st.rerun()
+            
+            st.divider()
+        
+        # Exemplo de perguntas (para todos os usuários)
         st.subheader("💡 Exemplos de perguntas")
         exemplos = [
             "Quantos dias de férias tenho direito?",
@@ -332,7 +429,7 @@ def main():
         
         st.divider()
         
-        # Botão para exportar conversa
+        # Botão para exportar conversa (para todos)
         if st.session_state.historico:
             pdf_data = gerar_pdf_conversa(st.session_state.historico)
             st.download_button(
@@ -344,12 +441,13 @@ def main():
                 key="export_conversa"
             )
         
-        # Botão para recarregar políticas
-        if st.button("🔄 Recarregar Políticas", use_container_width=True):
-            st.session_state.politicas = carregar_politicas()
-            st.success("Políticas recarregadas!")
-            time.sleep(1)
-            st.rerun()
+        # Botão para recarregar políticas (apenas RH)
+        if st.session_state.user_type == "rh":
+            if st.button("🔄 Recarregar Políticas", use_container_width=True):
+                st.session_state.politicas = carregar_politicas()
+                st.success("Políticas recarregadas!")
+                time.sleep(1)
+                st.rerun()
         
         st.divider()
         
