@@ -446,17 +446,6 @@ def main():
         
         st.divider()
         
-        # Exportar conversa
-        if st.session_state.historico:
-            pdf_data = gerar_pdf_conversa(st.session_state.historico)
-            st.download_button(
-                label="📄 Exportar Conversa (PDF)",
-                data=pdf_data,
-                file_name=f"conversa_rh_{st.session_state.user_name}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
-    
     # Área do chat
     chat_container = st.container()
     
@@ -544,6 +533,7 @@ def main():
         st.metric("PDFs", len(st.session_state.arquivos_carregados))
     
     st.caption(f"MVP Chatbot RH v2.0 • Uso interno • Usuário: {st.session_state.user_name}")
+
 
 # Teste da API antes de rodar o app
 def testar_api_gemini():
