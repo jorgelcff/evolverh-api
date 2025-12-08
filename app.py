@@ -267,6 +267,7 @@ def main():
     
     # Header
     col1, col2, col3 = st.columns([1, 3, 1])
+    col1, col2, col3 = st.columns([1, 3, 1])
     with col1:
         st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=60)
     with col2:
@@ -429,7 +430,27 @@ def main():
         
         st.divider()
         
-        # Exemplo de perguntas
+        # Funcionalidades específicas por tipo de usuário
+        if st.session_state.user_type == "rh":
+            st.subheader("⚙️ Painel RH")
+            
+            # Upload de políticas
+            st.markdown("**Atualizar Políticas:**")
+            uploaded_file = st.file_uploader("Selecione o arquivo politicas.txt", type="txt")
+            if uploaded_file is not None:
+                if st.button("📤 Subir Arquivo", key="upload"):
+                    # Salvar o arquivo
+                    with open('politicas.txt', 'wb') as f:
+                        f.write(uploaded_file.getvalue())
+                    # Recarregar políticas
+                    st.session_state.politicas = carregar_politicas()
+                    st.success("Políticas atualizadas com sucesso!")
+                    time.sleep(1)
+                    st.rerun()
+            
+            st.divider()
+        
+        # Exemplo de perguntas (para todos os usuários)
         st.subheader("💡 Exemplos de perguntas")
         exemplos = [
             "Quantos dias de férias tenho direito?",
