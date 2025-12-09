@@ -4,13 +4,15 @@ import os
 from dotenv import load_dotenv
 import time
 from fpdf import FPDF
+import PyPDF2
+from io import BytesIO
 
 # Configuração da página
 st.set_page_config(
     page_title="Chatbot RH - MVP",
     page_icon="🤖",
     layout="centered",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
 # Carregar variáveis de ambiente
@@ -24,40 +26,115 @@ CREDENCIAIS = {
 
 # Função de login
 def login_page():
+    st.markdown("""
+    <style>
+    .login-container {
+        max-width: 400px;
+        margin: 0 auto;
+        padding: 2rem;
+        background-color: #f8f9fa;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=100)
+    
     st.title("🔐 Login - Chatbot RH")
     st.caption("Sistema de acesso para funcionários")
     
     with st.form("login_form"):
-        username = st.text_input("Usuário")
-        password = st.text_input("Senha", type="password")
-        submitted = st.form_submit_button("Entrar")
+        username = st.text_input("Usuário", placeholder="Digite seu usuário")
+        password = st.text_input("Senha", type="password", placeholder="Digite sua senha")
+        submitted = st.form_submit_button("Entrar", use_container_width=True)
         
         if submitted:
             if username in CREDENCIAIS and CREDENCIAIS[username]["senha"] == password:
                 st.session_state.logged_in = True
                 st.session_state.user_type = CREDENCIAIS[username]["tipo"]
                 st.session_state.user_name = CREDENCIAIS[username]["nome"]
-                st.success(f"Bem-vindo, {CREDENCIAIS[username]['nome']}!")
+                st.session_state.user_email = CREDENCIAIS[username]["email"]
+                st.success(f"✅ Bem-vindo, {CREDENCIAIS[username]['nome']}!")
                 time.sleep(1)
                 st.rerun()
             else:
-                st.error("Usuário ou senha incorretos")
+                st.error("❌ Usuário ou senha incorretos")
+    
+    st.divider()
+    
+    # Informações de teste
+    with st.expander("ℹ️ Credenciais de Teste"):
+        st.markdown("""
+        **Usuário RH:**
+        - Usuário: `rh`
+        - Senha: `rh123`
+        
+        **Funcionário:**
+        - Usuário: `funcionario`
+        - Senha: `func123`
+        """)
 
-# Função principal
-def main():
-    # Verificar se está logado
-    if not st.session_state.get("logged_in", False):
-        login_page()
-        return
+# Função para extrair texto de PDF
+def extrair_texto_pdf(arquivo_pdf):
+    """Extrai texto de um arquivo PDF"""
+    try:
+        pdf_reader = PyPDF2.PdfReader(arquivo_pdf)
+        texto_completo = []
+        
+        for pagina_num, pagina in enumerate(pdf_reader.pages, 1):
+            texto = pagina.extract_text()
+            if texto.strip():
+                texto_completo.append(f"--- Página {pagina_num} ---\n{texto}")
+        
+        return "\n\n".join(texto_completo)
+    except Exception as e:
+        st.error(f"Erro ao processar PDF: {str(e)}")
+        return None
 
-    # Configurar API apenas após login
-    if not os.getenv("GEMINI_API_KEY"):
-        st.error("⚠️ API Key não configurada. Crie um arquivo .env com GEMINI_API_KEY")
-        st.info("Obtenha em: https://aistudio.google.com/app/apikey")
-        return
+# Função para salvar políticas extraídas
+def salvar_politicas(texto, nome_arquivo="politicas_extraidas.txt"):
+    """Salva o texto extraído em arquivo"""
+    try:
+        os.makedirs("dados", exist_ok=True)
+        caminho = os.path.join("dados", nome_arquivo)
+        
+        with open(caminho, 'w', encoding='utf-8') as file:
+            file.write(texto)
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar políticas: {str(e)}")
+        return False
 
-    # Configurar Gemini
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Função para carregar políticas
+def carregar_politicas():
+    """Carrega políticas de múltiplas fontes"""
+    politicas_completas = []
+    
+    # Tentar carregar de politicas.txt (arquivo original)
+    if os.path.exists('politicas.txt'):
+        try:
+            with open('politicas.txt', 'r', encoding='utf-8') as file:
+                politicas_completas.append("=== POLÍTICAS ORIGINAIS ===\n" + file.read())
+        except Exception as e:
+            pass
+    
+    # Tentar carregar políticas extraídas de PDFs
+    caminho_extraidas = os.path.join("dados", "politicas_extraidas.txt")
+    if os.path.exists(caminho_extraidas):
+        try:
+            with open(caminho_extraidas, 'r', encoding='utf-8') as file:
+                politicas_completas.append("\n\n=== POLÍTICAS DE DOCUMENTOS CARREGADOS ===\n" + file.read())
+        except Exception as e:
+            pass
+    
+    # Se tiver políticas na session_state (upload recente)
+    if 'politicas_uploaded' in st.session_state and st.session_state.politicas_uploaded:
+        politicas_completas.append("\n\n=== DOCUMENTOS DA SESSÃO ATUAL ===\n" + st.session_state.politicas_uploaded)
+    
+    return "\n\n".join(politicas_completas) if politicas_completas else "Nenhuma política carregada ainda."
 
 # Função para gerar PDF da conversa
 def gerar_pdf_conversa(historico):
@@ -73,55 +150,13 @@ def gerar_pdf_conversa(historico):
         pdf.set_font("Arial", 'B', 12)
         pdf.cell(0, 10, txt=f"{role}:", ln=True)
         pdf.set_font("Arial", size=12)
-        # Quebrar linhas longas
         content = msg['content']
         pdf.multi_cell(0, 10, txt=content)
         pdf.ln(5)
     
     return pdf.output(dest='S').encode('latin-1')
 
-# Função para carregar políticas
-@st.cache_data
-def carregar_politicas():
-    try:
-        with open('politicas.txt', 'r', encoding='utf-8') as file:
-            return file.read()
-    except FileNotFoundError:
-        st.error("Arquivo politicas.txt não encontrado!")
-        return ""
-
-# Função para gerar PDF da conversa
-def gerar_pdf_conversa(historico):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    
-    pdf.cell(200, 10, txt="Historico da Conversa - Chatbot RH", ln=True, align='C')
-    pdf.ln(10)
-    
-    for msg in historico:
-        role = "Voce" if msg['role'] == 'user' else "Assistente"
-        pdf.set_font("Arial", 'B', 12)
-        pdf.cell(0, 10, txt=f"{role}:", ln=True)
-        pdf.set_font("Arial", size=12)
-        # Quebrar linhas longas
-        content = msg['content']
-        pdf.multi_cell(0, 10, txt=content)
-        pdf.ln(5)
-    
-    return pdf.output(dest='S').encode('latin-1')
-
-# Função para carregar políticas
-@st.cache_data
-def carregar_politicas():
-    try:
-        with open('politicas.txt', 'r', encoding='utf-8') as file:
-            return file.read()
-    except FileNotFoundError:
-        st.error("Arquivo politicas.txt não encontrado!")
-        return ""
-
-# Função para buscar resposta com múltiplos modelos de fallback
+# Função para buscar resposta
 def buscar_resposta(pergunta, historico_conversa, politicas):
     contexto = f"""
     Você é um assistente virtual de RH especializado em responder dúvidas de colaboradores.
@@ -146,14 +181,13 @@ def buscar_resposta(pergunta, historico_conversa, politicas):
     RESPOSTA:
     """
     
-    # Lista de modelos para tentar (em ordem de preferência)
     modelos = [
-        'models/gemini-2.0-flash',          # Modelo rápido e estável
-        'models/gemini-2.0-flash-001',      # Outra versão do Flash
-        'models/gemini-flash-latest',       # Última versão Flash
-        'models/gemini-pro-latest',         # Última versão Pro
-        'models/gemini-2.0-flash-lite',     # Versão mais leve
-        'models/gemini-1.5-flash',          # Versão anterior
+        'models/gemini-2.0-flash',
+        'models/gemini-2.0-flash-001',
+        'models/gemini-flash-latest',
+        'models/gemini-pro-latest',
+        'models/gemini-2.0-flash-lite',
+        'models/gemini-1.5-flash',
     ]
     
     for modelo_nome in modelos:
@@ -169,17 +203,15 @@ def buscar_resposta(pergunta, historico_conversa, politicas):
             return response.text
         except Exception as e:
             print(f"Modelo {modelo_nome} falhou: {str(e)}")
-            continue  # Tenta o próximo modelo
+            continue
     
-    # Se todos os modelos falharem, retorna resposta simulada
     return gerar_resposta_simulada(pergunta, politicas)
 
-# Função de fallback caso todos os modelos falhem
+# Função de fallback
 def gerar_resposta_simulada(pergunta, politicas):
-    """Gera uma resposta simulada baseada em palavras-chave das políticas"""
+    """Gera uma resposta simulada baseada em palavras-chave"""
     pergunta_lower = pergunta.lower()
     
-    # Respostas baseadas em palavras-chave
     if any(palavra in pergunta_lower for palavra in ['oi', 'olá', 'hello', 'bom dia', 'tudo bem']):
         return "Olá! Sou o Assistente Virtual de RH. Como posso ajudar você hoje?"
     
@@ -188,143 +220,11 @@ def gerar_resposta_simulada(pergunta, politicas):
 - Todo colaborador tem direito a 30 dias de férias após 12 meses de trabalho
 - As férias podem ser divididas em até 3 períodos
 - Agendamento com 30 dias de antecedência
-- Período aquisitivo: Janeiro a Dezembro
-- Férias coletivas: Definidas anualmente pelo RH
-- Abono pecuniário: Opção de converter 1/3 das férias em dinheiro
-
-*Assistente Virtual de RH*"""
-    
-    elif 'vale-refeição' in pergunta_lower or 'vr' in pergunta_lower:
-        return """**Vale-Refeição:**
-- Valor: R$ 30,00 por dia útil
-
-*Assistente Virtual de RH*"""
-    
-    elif 'vale-alimentação' in pergunta_lower or 'va' in pergunta_lower:
-        return """**Vale-Alimentação:**
-- Valor: R$ 500,00/mês para compras em supermercados
-
-*Assistente Virtual de RH*"""
-    
-    elif 'salário' in pergunta_lower or 'pagamento' in pergunta_lower:
-        return """**Folha de Pagamento:**
-- Pagamento: dia 5 de cada mês
-- Adiantamento: dia 20 (até 40% do salário)
-- Descontos: INSS, IRRF, vale-transporte, plano de saúde
-- 13º salário: primeira parcela em Novembro, segunda em Dezembro
-- Participação nos lucros: Anual, baseada em metas da empresa
-
-*Assistente Virtual de RH*"""
-    
-    elif 'home office' in pergunta_lower or 'remoto' in pergunta_lower:
-        return """**Home Office:**
-- Permitido até 3 dias por semana
-- Necessária aprovação prévia do gestor
-
-*Assistente Virtual de RH*"""
-    
-    elif 'benefício' in pergunta_lower:
-        return """**Benefícios Disponíveis:**
-1. Vale-refeição: R$ 30,00/dia útil
-2. Vale-transporte: com desconto de 6% do salário
-3. Plano de saúde: cobertura completa após 3 meses
-4. Gympass: disponível para todos colaboradores
-5. Auxílio-creche: R$ 400,00/mês para filhos até 5 anos
-6. Seguro de vida: Cobertura de 100 salários mínimos
-7. Vale-alimentação: R$ 500,00/mês
-
-*Assistente Virtual de RH*"""
-    
-    elif 'ponto' in pergunta_lower or 'jornada' in pergunta_lower:
-        return """**Regime de Ponto:**
-- Jornada: 9h às 18h (com 1h de almoço)
-- Flexibilidade: entrada entre 8h e 10h
-- Banco de horas: horas extras convertidas em folga
-- Home office: até 3 dias/semana
-- Horário de verão: Ajuste automático conforme decreto municipal
-- Controle de ponto: Via sistema digital, com tolerância de 10 minutos
-
-*Assistente Virtual de RH*"""
-    
-    elif 'equipamento' in pergunta_lower or 'computador' in pergunta_lower or 'notebook' in pergunta_lower:
-        return """**Política de Uso de Equipamentos:**
-- Computadores e notebooks: Uso exclusivo para trabalho, com senha obrigatória
-- Internet: Acesso limitado a sites de trabalho; bloqueio de redes sociais pessoais durante expediente
-- Telefones corporativos: Uso para ligações de trabalho; recargas mensais de R$ 50,00
-- Veículos da empresa: Uso autorizado apenas para deslocamentos profissionais
-- Manutenção: Reportar defeitos imediatamente ao TI
-- Responsabilidade: Colaborador responsável por danos ou perdas
-
-*Assistente Virtual de RH*"""
-    
-    elif 'viagem' in pergunta_lower or 'viagens' in pergunta_lower:
-        return """**Política de Viagens:**
-- Viagens a trabalho: Aprovação prévia do gestor e RH
-- Diárias: R$ 200,00/dia para alimentação e hospedagem
-- Transporte: Passagens aéreas ou terrestres custeadas pela empresa
-- Seguro viagem: Obrigatório para viagens internacionais
-- Relatório: Apresentar relatório de viagem em até 5 dias após retorno
-- Cancelamento: Comunicar com antecedência mínima de 48 horas
-
-*Assistente Virtual de RH*"""
-    
-    elif 'segurança' in pergunta_lower or 'informação' in pergunta_lower or 'senha' in pergunta_lower:
-        return """**Política de Segurança da Informação:**
-- Senhas: Mínimo 8 caracteres, alteração a cada 90 dias
-- Dados sensíveis: Não compartilhar via email não criptografado
-- Backup: Dados importantes devem ser salvos em nuvem corporativa
-- Acesso remoto: Via VPN obrigatória
-- Incidentes: Reportar imediatamente ao TI e RH
-- Treinamentos: Anuais sobre cibersegurança
-
-*Assistente Virtual de RH*"""
-    
-    elif 'sustentabilidade' in pergunta_lower or 'ambiente' in pergunta_lower or 'reciclagem' in pergunta_lower:
-        return """**Política de Sustentabilidade:**
-- Reciclagem: Separar lixo em áreas designadas
-- Energia: Desligar equipamentos ao final do expediente
-- Papel: Uso de papel reciclado e impressão dupla face
-- Transporte: Incentivo ao uso de transporte público ou bicicleta
-- Compromisso ambiental: Participação em campanhas de conscientização
-
-*Assistente Virtual de RH*"""
-    
-    elif 'licença' in pergunta_lower or 'afastamento' in pergunta_lower or 'maternidade' in pergunta_lower:
-        return """**Licenças e Afastamentos:**
-- Licença-maternidade: 6 meses
-- Licença-paternidade: 20 dias
-- Atestado médico: comunicar ao RH em até 3 dias úteis
-- Luto: 5 dias corridos para parentes de primeiro grau
-- Casamento: 10 dias corridos
-- Doença grave: Até 90 dias por ano, com atestado médico
-
-*Assistente Virtual de RH*"""
-    
-    elif 'desenvolvimento' in pergunta_lower or 'educação' in pergunta_lower or 'curso' in pergunta_lower:
-        return """**Desenvolvimento Profissional:**
-- Auxílio educação: até R$ 500,00/mês para cursos relacionados
-- Certificações: reembolso de 80% do valor após aprovação
-- Palestras e eventos: participação mediante aprovação do gestor
-- Programa de mentoria: Disponível para novos colaboradores
-- Avaliação de desempenho: Semestral, com feedback construtivo
 
 *Assistente Virtual de RH*"""
     
     else:
-        return """Entendi sua pergunta. Baseado nas políticas da empresa, posso ajudar com:
-
-• **Férias:** direitos, agendamento, período aquisitivo, férias coletivas, abono
-• **Benefícios:** vale-refeição, vale-transporte, plano de saúde, Gympass, auxílio-creche, seguro de vida, vale-alimentação
-• **Ponto:** jornada, flexibilidade, banco de horas, home office, horário de verão
-• **Folha de pagamento:** datas, descontos, 13º salário, participação nos lucros
-• **Licenças:** maternidade, paternidade, atestado, luto, casamento, doença
-• **Desenvolvimento:** auxílio educação, certificações, mentoria, avaliação
-• **Equipamentos:** uso de computadores, internet, telefones, veículos
-• **Viagens:** aprovação, diárias, transporte, seguro, relatório
-• **Segurança:** senhas, dados sensíveis, backup, acesso remoto
-• **Sustentabilidade:** reciclagem, energia, papel, transporte
-
-Qual desses tópicos gostaria de saber mais?
+        return """Entendi sua pergunta. Por favor, consulte as políticas carregadas ou entre em contato com o RH.
 
 *Assistente Virtual de RH*"""
 
@@ -335,6 +235,15 @@ def main():
         login_page()
         return
     
+    # Verificar API key
+    if not os.getenv("GEMINI_API_KEY"):
+        st.error("⚠️ API Key não configurada. Crie um arquivo .env com GEMINI_API_KEY")
+        st.info("Obtenha em: https://aistudio.google.com/app/apikey")
+        return
+    
+    # Configurar Gemini
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    
     # CSS customizado
     st.markdown("""
     <style>
@@ -342,16 +251,34 @@ def main():
     .user-message {background-color: #e3f2fd; border-left: 4px solid #2196f3;}
     .bot-message {background-color: #f5f5f5; border-left: 4px solid #4caf50;}
     .stButton button {width: 100%; margin-bottom: 0.5rem;}
+    .user-badge {
+        background-color: #4caf50;
+        color: white;
+        padding: 0.25rem 0.75rem;
+        border-radius: 15px;
+        font-size: 0.85rem;
+        font-weight: bold;
+    }
+    .user-badge-rh {
+        background-color: #ff9800;
+    }
     </style>
     """, unsafe_allow_html=True)
     
     # Header
     col1, col2, col3 = st.columns([1, 3, 1])
+    col1, col2, col3 = st.columns([1, 3, 1])
     with col1:
         st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=60)
     with col2:
         st.title("🤖 Chatbot de RH")
-        st.caption(f"MVP - Assistente Virtual | Usuário: {st.session_state.user_name}")
+        badge_class = "user-badge-rh" if st.session_state.user_type == "rh" else ""
+        st.markdown(f"""
+        MVP - Assistente Virtual  
+        <span class='user-badge {badge_class}'>
+        👤 {st.session_state.user_name} ({st.session_state.user_type.upper()})
+        </span>
+        """, unsafe_allow_html=True)
     with col3:
         if st.button("🚪 Sair", key="logout"):
             st.session_state.logged_in = False
@@ -360,31 +287,146 @@ def main():
             st.session_state.historico = []
             st.rerun()
     
-    # Inicializar histórico na session state
+    # Inicializar session state
     if 'historico' not in st.session_state:
         st.session_state.historico = []
     
     if 'politicas' not in st.session_state:
         st.session_state.politicas = carregar_politicas()
     
-    # Sidebar com informações
+    if 'politicas_uploaded' not in st.session_state:
+        st.session_state.politicas_uploaded = ""
+    
+    if 'arquivos_carregados' not in st.session_state:
+        st.session_state.arquivos_carregados = []
+    
+    # Sidebar
     with st.sidebar:
-        st.header("ℹ️ Sobre")
-        st.markdown("""
-        Este é um MVP de chatbot de RH que responde dúvidas baseadas nas políticas internas da empresa.
+        # Seção de Upload (apenas para RH)
+        if st.session_state.user_type == "rh":
+            st.header("📤 Upload de Documentos")
+            st.markdown("""
+            <div style='background-color: #fff3e0; padding: 1rem; border-radius: 5px; margin-bottom: 1rem;'>
+            <strong>⚠️ ÁREA RESTRITA - RH</strong><br>
+            Você tem permissão para fazer upload de políticas.
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown("""
+            <div style='background-color: #e8f5e9; padding: 1rem; border-radius: 5px; margin-bottom: 1rem;'>
+            <strong>📋 Como usar:</strong><br>
+            1. Faça upload dos PDFs com políticas<br>
+            2. Aguarde o processamento<br>
+            3. Os documentos ficarão disponíveis para todos!
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Upload de múltiplos arquivos PDF
+            arquivos_pdf = st.file_uploader(
+                "Selecione um ou mais arquivos PDF",
+                type=['pdf'],
+                accept_multiple_files=True,
+                help="Faça upload dos documentos de políticas da empresa"
+            )
+            
+            if arquivos_pdf:
+                if st.button("🔄 Processar PDFs", use_container_width=True, type="primary"):
+                    textos_extraidos = []
+                    
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    for idx, arquivo in enumerate(arquivos_pdf):
+                        status_text.text(f"Processando: {arquivo.name}...")
+                        
+                        # Extrair texto do PDF
+                        texto = extrair_texto_pdf(arquivo)
+                        
+                        if texto:
+                            textos_extraidos.append(f"\n\n=== DOCUMENTO: {arquivo.name} ===\n{texto}")
+                            
+                            # Verificar se arquivo já existe
+                            arquivo_existe = False
+                            for arq in st.session_state.arquivos_carregados:
+                                if arq['nome'] == arquivo.name:
+                                    arquivo_existe = True
+                                    break
+                            
+                            if not arquivo_existe:
+                                st.session_state.arquivos_carregados.append({
+                                    'nome': arquivo.name,
+                                    'tamanho': arquivo.size,
+                                    'timestamp': time.strftime("%d/%m/%Y %H:%M"),
+                                    'uploaded_by': st.session_state.user_name
+                                })
+                        
+                        progress_bar.progress((idx + 1) / len(arquivos_pdf))
+                    
+                    if textos_extraidos:
+                        # Juntar todos os textos
+                        texto_completo = "\n".join(textos_extraidos)
+                        
+                        # Adicionar ao texto já existente (não sobrescrever)
+                        if st.session_state.politicas_uploaded:
+                            st.session_state.politicas_uploaded += "\n\n" + texto_completo
+                        else:
+                            st.session_state.politicas_uploaded = texto_completo
+                        
+                        # Salvar em arquivo
+                        salvar_politicas(st.session_state.politicas_uploaded)
+                        
+                        # Recarregar políticas
+                        st.session_state.politicas = carregar_politicas()
+                        
+                        status_text.empty()
+                        progress_bar.empty()
+                        st.success(f"✅ {len(arquivos_pdf)} arquivo(s) processado(s) com sucesso!")
+                        time.sleep(1)
+                        st.rerun()
+            
+            st.divider()
         
-        **Temas disponíveis:**
-        - Férias e descanso
-        - Benefícios
-        - Ponto e jornada
-        - Folha de pagamento
-        - Desenvolvimento
-        - Código de conduta
-        - Equipamentos
-        - Viagens
-        - Segurança da informação
-        - Sustentabilidade
-        """)
+        # Mostrar arquivos carregados (para todos)
+        if st.session_state.arquivos_carregados:
+            st.subheader("📁 Arquivos Carregados")
+            for arquivo in st.session_state.arquivos_carregados:
+                with st.expander(f"📄 {arquivo['nome']}"):
+                    st.write(f"**Tamanho:** {arquivo['tamanho'] / 1024:.2f} KB")
+                    st.write(f"**Carregado em:** {arquivo['timestamp']}")
+                    st.write(f"**Carregado por:** {arquivo.get('uploaded_by', 'Sistema')}")
+            
+            # Botão para limpar (apenas RH)
+            if st.session_state.user_type == "rh":
+                if st.button("🗑️ Limpar Todos os Arquivos", use_container_width=True):
+                    st.session_state.arquivos_carregados = []
+                    st.session_state.politicas_uploaded = ""
+                    caminho = os.path.join("dados", "politicas_extraidas.txt")
+                    if os.path.exists(caminho):
+                        os.remove(caminho)
+                    st.session_state.politicas = carregar_politicas()
+                    st.success("Arquivos removidos!")
+                    time.sleep(1)
+                    st.rerun()
+            
+            st.divider()
+        
+        # Informações
+        st.header("ℹ️ Sobre")
+        if st.session_state.user_type == "rh":
+            st.markdown("""
+            **Funcionalidades RH:**
+            - 📤 Upload de PDFs com políticas
+            - 🗑️ Gerenciar documentos
+            - 💬 Testar o chatbot
+            - 📊 Visualizar estatísticas
+            """)
+        else:
+            st.markdown("""
+            **Funcionalidades:**
+            - 💬 Consultar políticas da empresa
+            - 📄 Exportar conversas
+            - 🤖 Respostas baseadas em IA
+            """)
         
         st.divider()
         
@@ -415,56 +457,29 @@ def main():
             "Qual o valor do vale-refeição?",
             "Como funciona o banco de horas?",
             "Quando é o pagamento do salário?",
-            "Posso trabalhar de home office?",
-            "Como usar equipamentos da empresa?",
-            "Quais são as regras para viagens?",
-            "Como manter a segurança da informação?",
-            "Qual a política de sustentabilidade?"
+            "Posso trabalhar de home office?"
         ]
         
         for exemplo in exemplos:
-            if st.button(f"\"{exemplo}\"", key=exemplo):
+            if st.button(f'"{exemplo}"', key=exemplo):
                 st.session_state.pergunta_exemplo = exemplo
                 st.rerun()
         
         st.divider()
         
-        # Botão para exportar conversa (para todos)
-        if st.session_state.historico:
-            pdf_data = gerar_pdf_conversa(st.session_state.historico)
-            st.download_button(
-                label="📄 Exportar Conversa (PDF)",
-                data=pdf_data,
-                file_name="conversa_rh.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                key="export_conversa"
-            )
-        
-        # Botão para recarregar políticas (apenas RH)
-        if st.session_state.user_type == "rh":
-            if st.button("🔄 Recarregar Políticas", use_container_width=True):
-                st.session_state.politicas = carregar_politicas()
-                st.success("Políticas recarregadas!")
-                time.sleep(1)
-                st.rerun()
-        
-        st.divider()
-        
-        # Seção de feedback
-        st.subheader("📝 Feedback")
-        feedback = st.text_area("Deixe seu feedback sobre o chatbot:", height=100, placeholder="O que achou? Sugestões de melhoria?")
-        if st.button("Enviar Feedback", use_container_width=True) and feedback:
-            # Aqui poderia salvar em arquivo ou enviar para algum lugar
-            st.success("Obrigado pelo feedback! Ele será analisado pela equipe de RH.")
-    
     # Área do chat
     chat_container = st.container()
     
     with chat_container:
+        # Mostrar aviso se não houver políticas
+        if not st.session_state.politicas or st.session_state.politicas == "Nenhuma política carregada ainda.":
+            if st.session_state.user_type == "rh":
+                st.warning("⚠️ Nenhum documento carregado ainda. Faça upload de PDFs na barra lateral para começar!")
+            else:
+                st.info("ℹ️ Aguarde o RH carregar os documentos de políticas da empresa.")
+        
         # Exibir histórico
         for mensagem in st.session_state.historico:
-            # Limpar conteúdo para evitar tags HTML não fechadas
             content = mensagem['content'].strip()
             if content.endswith('</div>'):
                 content = content[:-6].strip()
@@ -482,52 +497,37 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
     
-    # Verificar se temos uma pergunta de exemplo para processar
+    # Verificar pergunta de exemplo
     if 'pergunta_exemplo' in st.session_state and st.session_state.pergunta_exemplo:
         pergunta = st.session_state.pergunta_exemplo
-        # Limpar a pergunta de exemplo após usar
         del st.session_state.pergunta_exemplo
         
-        # Processar a pergunta do exemplo
         st.session_state.historico.append({'role': 'user', 'content': pergunta})
         
-        # Preparar histórico para contexto
         historico_texto = "\n".join(
             [f"{msg['role']}: {msg['content']}" for msg in st.session_state.historico[-5:]]
         )
         
-        # Mostrar indicador de carregamento
         with st.spinner("Consultando políticas..."):
-            # Buscar resposta
             resposta = buscar_resposta(pergunta, historico_texto, st.session_state.politicas)
-            
-            # Adicionar resposta ao histórico
             st.session_state.historico.append({'role': 'assistant', 'content': resposta})
             
-        # Rerun para mostrar a resposta
         st.rerun()
     
-    # Chat input para perguntas manuais
+    # Chat input
     pergunta = st.chat_input("Digite sua pergunta sobre políticas da empresa...")
     
     if pergunta:
-        # Adicionar pergunta ao histórico
         st.session_state.historico.append({'role': 'user', 'content': pergunta})
         
-        # Preparar histórico para contexto
         historico_texto = "\n".join(
             [f"{msg['role']}: {msg['content']}" for msg in st.session_state.historico[-5:]]
         )
         
-        # Mostrar indicador de carregamento
         with st.spinner("Consultando políticas..."):
-            # Buscar resposta
             resposta = buscar_resposta(pergunta, historico_texto, st.session_state.politicas)
-            
-            # Adicionar resposta ao histórico
             st.session_state.historico.append({'role': 'assistant', 'content': resposta})
             
-        # Rerun para mostrar a resposta
         st.rerun()
     
     # Botão para limpar histórico
@@ -539,19 +539,22 @@ def main():
                 st.session_state.historico = []
                 st.rerun()
     
-    # Footer
+    # Footer com estatísticas
     st.divider()
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Mensagens", len(st.session_state.historico))
     with col2:
-        perguntas_user = len([msg for msg in st.session_state.historico if msg['role'] == 'user'])
-        st.metric("Perguntas", perguntas_user)
+        perguntas = len([msg for msg in st.session_state.historico if msg['role'] == 'user'])
+        st.metric("Perguntas", perguntas)
     with col3:
-        respostas_bot = len([msg for msg in st.session_state.historico if msg['role'] == 'assistant'])
-        st.metric("Respostas", respostas_bot)
+        respostas = len([msg for msg in st.session_state.historico if msg['role'] == 'assistant'])
+        st.metric("Respostas", respostas)
+    with col4:
+        st.metric("PDFs", len(st.session_state.arquivos_carregados))
     
-    st.caption("MVP Chatbot RH v1.0 • Uso interno • Baseado em políticas atualizadas em Dezembro/2024")
+    st.caption(f"MVP Chatbot RH v2.0 • Uso interno • Usuário: {st.session_state.user_name}")
+
 
 # Teste da API antes de rodar o app
 def testar_api_gemini():
