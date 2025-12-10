@@ -3,4 +3,3 @@ google-generativeai>=0.3.0
 python-dotenv>=1.0.0
 fpdf>=1.7.2
 PyPDF2>=3.0.0
-streamlit-heroicons>=0.3.0
