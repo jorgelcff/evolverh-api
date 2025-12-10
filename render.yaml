@@ -1,0 +1,12 @@
+# Configuração para deploy no Render.com
+services:
+  - type: web
+    name: evolverh-api
+    env: docker
+    region: oregon
+    plan: free
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+    autoDeploy: true
